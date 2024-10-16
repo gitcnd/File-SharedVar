@@ -24,9 +24,13 @@ File::SharedVar - Pure-Perl extension to share variables between Perl processes 
 
 =head1 DESCRIPTION
 
-File::SharedVar provides an object-oriented interface to share variables between Perl processes using a file as shared storage, with proper file locking mechanisms to ensure data integrity in concurrent environments.
+File::SharedVar provides an object-oriented interface to share variables between Perl processes using a file as shared storage, with working cross-platform file locking mechanisms to ensure data integrity in concurrent environments.
 
 It allows you to read, update, and reset shared variables stored in a file (uses JSON format), making it easy to coordinate between multiple processes.
+
+This module uses a lockfile as a mutex, because flock() does not work properly in WSL1, WSL2, or their lxfs file systems (randomly throws "invalid argument" on seek() calls under heavy load).
+
+This module was written to serve as a functioning alternative to the incomplete and unmaintained "IPC::Shareable" module which has multiple unfixed bugs reported against it (and which shreds your shared memory under long-running processes)
 
 =head2 CAUTION
 
@@ -39,9 +43,12 @@ The "test" phase of installing this module, when run on a system with broken loc
 use 5.030000;
 use strict;
 use warnings;
-use Fcntl qw( LOCK_EX LOCK_UN LOCK_NB O_RDWR );
+use Fcntl qw(:DEFAULT :flock LOCK_EX LOCK_UN LOCK_NB O_RDWR O_EXCL O_CREAT);
+#use Fcntl ':flock';   # For using O_EXCL and O_CREAT constants
+#use Fcntl qw(:DEFAULT :flock O_EXCL O_CREAT O_RDWR); # Ensure proper constants are imported
+
 #my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR)=(2,8,4,2); # These are required, because the $LOCK_* constants are sometimes not numbers, and inconveniently require "no strict 'subs';"
-my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR)=(0+LOCK_EX,0+LOCK_UN,0+LOCK_NB,0+O_RDWR); # Avoid no strict 'subs' and nonnumber issues
+my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR,$O_EXCL,$O_CREAT)=(0+LOCK_EX,0+LOCK_UN,0+LOCK_NB,0+O_RDWR,0+O_EXCL,0+O_CREAT); # Avoid no strict 'subs' and nonnumber issues
 
 our $VERSION = '1.00';
 
@@ -117,7 +124,7 @@ Returns the value associated with the key, or C<undef> if the key does not exist
 
 sub read {
   my ($self, $key) = @_;
-  my($data,$pfh)= _load_from_file($self->{file});
+  my($data,$fh)= _load_from_file($self->{file});
   return $data->{$key};
 }
 
@@ -149,7 +156,7 @@ Returns the new value associated with the key after the update.
 
 sub update {
   my ($self, $key, $val, $inc) = @_;
-  my($data,$pfh)= _load_from_file($self->{file},1);
+  my($data,$fh)= _load_from_file($self->{file},1);
 
   # Update the value for the key
   if ($inc) {
@@ -158,7 +165,7 @@ sub update {
     $data->{$key} = $val;
   }
   my $ret = $data->{$key};
-  _save_to_file($self->{file},$data,$pfh);
+  _save_to_file($self->{file},$data,$fh);
 
   return $ret;
 }
@@ -167,6 +174,11 @@ sub update {
 
 sub _load_from_file {
     my($lock_share_file,$staylocked)=@_;
+
+    #sysopen(my $lfh, $lock_share_file.'.lock', O_EXCL | O_CREAT ) or die "Cannot open $lock_share_file.lock: $!";
+
+#O_EXCL + O_CREAT
+
     #open my $fh, '+<', $lock_share_file or die "$$ Cannot open $lock_share_file: $!";
     sysopen(my $fh, $lock_share_file, $O_RDWR) or die "Cannot open $lock_share_file: $!";
 
@@ -184,17 +196,17 @@ sub _load_from_file {
       flock($fh, $LOCK_UN) or die "$$ Cannot unlock: $!";
       $fh->close; $fh=undef;
     }
-    return($data,\$fh);
+    return($data,$fh);
 }
 
 sub _save_to_file {
-    my ($lock_share_file,$data,$pfh) = @_;
-    #flock($$pfh, $LOCK_EX) or die "$$ Cannot lock: $!";  # LOCK_EX (exclusive lock for writing)
-    truncate($$pfh, 0) or die "$$ Cannot truncate file: $!";
-    #print ${$pfh}, encode_json($data);
-    syswrite($$pfh,encode_json($data));
-    flock($$pfh, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
-    $$pfh->close; $$pfh=undef; $pfh=undef;
+    my ($lock_share_file,$data,$fh) = @_;
+    #flock($fh, $LOCK_EX) or die "$$ Cannot lock: $!";  # LOCK_EX (exclusive lock for writing)
+    truncate($fh, 0) or die "$$ Cannot truncate $lock_share_file file: $!";
+    #print $fh encode_json($data);
+    syswrite($fh,encode_json($data));
+    flock($fh, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
+    $fh->close; $fh=undef; 
 }
 
 sub _open_lock {

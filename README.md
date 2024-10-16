@@ -29,12 +29,6 @@ File::SharedVar provides an object-oriented interface to share variables between
 
 It allows you to read, update, and reset shared variables stored in a file (uses JSON format), making it easy to coordinate between multiple processes.
 
-## CAUTION
-
-This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their "lxfs" filesystem.
-
-The "test" phase of installing this module, when run on a system with broken locking, may take an extended amount of time to fail (many minutes or even hours).
-
 # METHODS
 
 ## new
@@ -76,7 +70,7 @@ None by default.
 
 Please report any bugs or feature requests on the GitHub repository at:
 
-[https://github.com/gitcnd/File-SharedVar](https://github.com/gitcnd/File-SharedVar)
+[https://github.com/gitcnd/Math-LiveStats](https://github.com/gitcnd/Math-LiveStats)
 
 # AUTHOR
 

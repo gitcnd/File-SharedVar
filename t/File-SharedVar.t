@@ -76,7 +76,7 @@ foreach my $lockfile ('/tmp/test_file_sharedvar.dat','./test_file_sharedvar.dat'
   my $actual   = $shared_var->read('foo');
   
   ok($actual == $expected, "foo equals $expected after children have incremented using $lockfile");
-
+  diag("Test over\n")
   unlink($lockfile);
 } # $lockfile
 
