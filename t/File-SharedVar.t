@@ -17,6 +17,8 @@ BEGIN { use_ok('File::SharedVar') };
 # Insert your test code below, the Test::More module is use()ed here so read
 # its man page ( perldoc Test::More ) for help writing this test script.
 
+  diag("This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their lxfs filesystem.\n\nThe following test takes less than 1 minute on working systems and uses the filesystems on \"/tmp\" and \"./\" in testing.\n\nWhen run on a system with broken locking, these tests may take an extended amount of time to fail (many minutes or even hours).\n\nIf you see \"Cannot truncate file: Invalid argument\" below; one of these filesystems under test does not have functional locking.\n");
+
 foreach my $lockfile ('/tmp/test_file_sharedvar.dat','./test_file_sharedvar.dat') {
   
   my $shared_var=File::SharedVar->new(file => $lockfile, create => 1); # create new
@@ -35,11 +37,10 @@ foreach my $lockfile ('/tmp/test_file_sharedvar.dat','./test_file_sharedvar.dat'
   my $nreps=10;
   my %kids;
   
-  diag("This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their lxfs filesystem.\n\nThe following test takes less than 1 minute on working systems and uses the filesystems on \"/tmp\" and \"./\" in testing.\n\nWhen run on a system with broken locking, these tests may take an extended amount of time to fail (many minutes or even hours).\n\nIf you see \"Cannot truncate file: Invalid argument\" below; one of these filesystems under test does not have functional locking.\n");
   
   for (my $i = 0; $i < $nforks; $i++) {
     my $pid = fork();
-    diag("$pid is proc #$_") if($pid);
+    diag("$pid is proc #$i") if($DEBUG && $pid);
     die "Cannot fork: $!" unless defined $pid;
   
     if ($pid == 0) { # Child process
