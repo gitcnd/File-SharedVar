@@ -15,7 +15,7 @@ File::SharedVar - Pure-Perl extension to share variables between Perl processes 
   );
 
   # Update a key
-  my $new_value = $shared_var->update('foo', 1, 1); # Increment 'foo' by 1
+  my $previous_value = $shared_var->update('foo', 1, 1); # Increment 'foo' by 1
 
   # Read a key
   my $value = $shared_var->read('foo');
