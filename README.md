@@ -25,9 +25,19 @@ This github release is not currently functional (I've just discovered that WSL a
 
 # DESCRIPTION
 
-File::SharedVar provides an object-oriented interface to share variables between Perl processes using a file as shared storage, with proper file locking mechanisms to ensure data integrity in concurrent environments.
+File::SharedVar provides an object-oriented interface to share variables between Perl processes using a file as shared storage, with working cross-platform file locking mechanisms to ensure data integrity in concurrent environments.
 
 It allows you to read, update, and reset shared variables stored in a file (uses JSON format), making it easy to coordinate between multiple processes.
+
+This module uses a lockfile as a mutex, because flock() does not work properly in WSL1, WSL2, or their lxfs file systems (randomly throws "invalid argument" on seek() calls under heavy load).
+
+This module was written to serve as a functioning alternative to the incomplete and unmaintained "IPC::Shareable" module which has multiple unfixed bugs reported against it (and which shreds your shared memory under long-running processes)
+
+## CAUTION
+
+This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their "lxfs" filesystem.
+
+The "test" phase of installing this module, when run on a system with broken locking, may take an extended amount of time to fail (many minutes or even hours).
 
 # METHODS
 
@@ -37,7 +47,8 @@ It allows you to read, update, and reset shared variables stored in a file (uses
 
 Creates a new \`File::SharedVar\` object.
 
-- `file`: Path to the shared variable file. Defaults to `/tmp/sharedvar.dat`.
+- `file`: Path to the shared variable file. Defaults to `/tmp/sharedvar$$.dat`.
+`mutex`: set this key to 'lock' to use file-existance locking instead of just flock(). Uses `file.lock` for locking.
 - `create`: If true (non-zero), the file will be created if it doesn't exist or truncated if it does. Defaults to `0`.
 
 ## read
@@ -70,7 +81,7 @@ None by default.
 
 Please report any bugs or feature requests on the GitHub repository at:
 
-[https://github.com/gitcnd/Math-LiveStats](https://github.com/gitcnd/Math-LiveStats)
+[https://github.com/gitcnd/File-SharedVar](https://github.com/gitcnd/File-SharedVar)
 
 # AUTHOR
 

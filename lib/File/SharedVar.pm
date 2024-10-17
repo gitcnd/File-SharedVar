@@ -4,6 +4,10 @@ package File::SharedVar;
 
 File::SharedVar - Pure-Perl extension to share variables between Perl processes using files and file locking for their transport
 
+=head1 CAUTION
+
+This github release is not currently functional (I've just discovered that WSL and lxfs have bugs in their file locking, and this code is a work-in-progress to try and accomodate those platforms)
+
 =head1 SYNOPSIS
 
   use File::SharedVar;
@@ -51,6 +55,7 @@ use Fcntl qw(:DEFAULT :flock LOCK_EX LOCK_UN LOCK_NB O_RDWR O_EXCL O_CREAT);
 my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR,$O_EXCL,$O_CREAT)=(0+LOCK_EX,0+LOCK_UN,0+LOCK_NB,0+O_RDWR,0+O_EXCL,0+O_CREAT); # Avoid no strict 'subs' and nonnumber issues
 
 our $VERSION = '1.00';
+our $DEBUG = 0;
 
 eval {
   require JSON::XS;
@@ -63,8 +68,9 @@ eval {
 #my $json_text = encode_json($data);
 #my $decoded_data = decode_json($json_text);
 
-
 =head1 METHODS
+
+
 
 =head2 new
 
@@ -76,7 +82,8 @@ Creates a new `File::SharedVar` object.
 
 =item *
 
-C<file>: Path to the shared variable file. Defaults to C</tmp/sharedvar.dat>.
+C<file>: Path to the shared variable file. Defaults to C</tmp/sharedvar$$.dat>.
+C<mutex>: set this key to 'lock' to use file-existance locking instead of just flock(). Uses C<file.lock> for locking.
 
 =item *
 
@@ -89,7 +96,8 @@ C<create>: If true (non-zero), the file will be created if it doesn't exist or t
 sub new {
   my ($class, %args) = @_;
   my $self = {
-    file   => $args{file}   // '/tmp/sharedvar.dat',
+    file   => $args{file}   // "/tmp/sharedvar$$.dat",
+    fh     => undef,
   };
 
   bless $self, $class;
@@ -101,8 +109,11 @@ sub new {
   } elsif (!-f $self->{file}) {
     die $self->{file},": No such file";
   }
+  $self->{lock}=$self->{file}.".lock" if($args{mutex} && $args{mutex} eq 'lock');
   return $self;
 }
+
+
 
 =head2 read
 
@@ -124,9 +135,11 @@ Returns the value associated with the key, or C<undef> if the key does not exist
 
 sub read {
   my ($self, $key) = @_;
-  my($data,$fh)= _load_from_file($self->{file});
+  my($data)= _load_from_file($self);
   return $data->{$key};
 }
+
+
 
 =head2 update
 
@@ -155,17 +168,17 @@ Returns the new value associated with the key after the update.
 =cut
 
 sub update {
-  my ($self, $key, $val, $inc) = @_;
-  my($data,$fh)= _load_from_file($self->{file},1);
+  my($self, $key, $val, $inc) = @_;
+  my($data)= _load_from_file($self,1);
 
   # Update the value for the key
-  if ($inc) {
+  if($inc) {
     $data->{$key} = ($data->{$key} // 0) + $val;
   } else {
     $data->{$key} = $val;
   }
   my $ret = $data->{$key};
-  _save_to_file($self->{file},$data,$fh);
+  _save_to_file($self,$data);
 
   return $ret;
 }
@@ -173,53 +186,68 @@ sub update {
 
 
 sub _load_from_file {
-    my($lock_share_file,$staylocked)=@_;
+  my($self,$staylocked)=@_;
 
-    #sysopen(my $lfh, $lock_share_file.'.lock', O_EXCL | O_CREAT ) or die "Cannot open $lock_share_file.lock: $!";
+  if($self->{lock}) {
+    sysopen($self->{lfh}, $self->{lock}, O_EXCL | O_CREAT ) or die "Cannot open $self->{lock}: $!";
+    die "incomplete";
+  }
 
-#O_EXCL + O_CREAT
+  open $self->{fh}, '+<', $self->{file} or die "$$ Cannot open $self->{file}: $!";
+  #sysopen($self->{fh}, $self->{file}, $O_RDWR) or die "Cannot open $self->{file}: $!";
 
-    #open my $fh, '+<', $lock_share_file or die "$$ Cannot open $lock_share_file: $!";
-    sysopen(my $fh, $lock_share_file, $O_RDWR) or die "Cannot open $lock_share_file: $!";
+  my $data = {};
 
-    my $data = {};
-
-    print "$$ pre-lock\n";
-    flock($fh, $LOCK_EX) or die "$$ Cannot lock: $!";
-    print "$$ post-lock\n";
-    #my $json_text = do { local $/; <$fh> };
-    my $json_text;
-    sysread($fh,$json_text,65535); # = do { local $/; <$fh> };
-    seek($fh, 0, 0) or die "$$ Cannot seek: $!";
-    $data = decode_json($json_text) if $json_text;
-    unless($staylocked){  # LOCK_UN (unlock)
-      flock($fh, $LOCK_UN) or die "$$ Cannot unlock: $!";
-      $fh->close; $fh=undef;
+  &dbg( "$$ pre-lock" );
+  flock($self->{fh}, $LOCK_EX) or die "$$ Cannot lock: $!";
+  my $json_text = undef; do { local $/; $json_text=readline($self->{fh}) };
+  #my $json_text = undef; do { local $/; my $fh=$self->{fh}; <$fh> };
+  &dbg( "$$ post-lock d=$json_text" );
+  #my $json_text; sysread($self->{fh},$json_text,65535); 
+  $data = decode_json($json_text) if $json_text;
+  unless($staylocked){  # LOCK_UN (unlock)
+    flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";
+    $self->{fh}->close; $self->{fh}=undef;
+    if($self->{lock}) {
+      die "incomplete";
     }
-    return($data,$fh);
-}
+  }
+  return($data);
+} # _load_from_file
+
 
 sub _save_to_file {
-    my ($lock_share_file,$data,$fh) = @_;
-    #flock($fh, $LOCK_EX) or die "$$ Cannot lock: $!";  # LOCK_EX (exclusive lock for writing)
-    truncate($fh, 0) or die "$$ Cannot truncate $lock_share_file file: $!";
-    #print $fh encode_json($data);
-    syswrite($fh,encode_json($data));
-    flock($fh, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
-    $fh->close; $fh=undef; 
-}
+  my ($self,$data) = @_;
+  seek($self->{fh}, 0, 0) or die "$$ Cannot seek: $!";
+  truncate($self->{fh}, 0) or die "$$ Cannot truncate $self->{file} file: $!";
+  print { $self->{fh} } encode_json($data);
+  #syswrite($self->{fh},encode_json($data));
+  flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
+  $self->{fh}->close; $self->{fh}=undef; 
+  if($self->{lock}) {
+    die "incomplete";
+  }
+} # _save_to_file
+
 
 sub _open_lock {
-  my($lock_share_file)=@_;
+  my($self)=@_;
   my $i=0;
   while($i++<9999) {
-    sysopen(my $fh, $lock_share_file, $O_RDWR) or die "Cannot open $lock_share_file: $!";
+    sysopen($self->{fh}, $self->{file}, $O_RDWR) or die "Cannot open $self: $!";
     
   }
 }
 
 
 
+sub dbg {
+  if($DEBUG) {
+    my $message = shift;
+    my ($package, $filename, $line) = caller;
+    print STDERR "$message at $filename line $line.\n";
+  }
+}
 
 
 
