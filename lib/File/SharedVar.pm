@@ -4,10 +4,6 @@ package File::SharedVar;
 
 File::SharedVar - Pure-Perl extension to share variables between Perl processes using files and file locking for their transport
 
-=head1 CAUTION
-
-This github release is not currently functional (I've just discovered that WSL and lxfs have bugs in their file locking, and this code is a work-in-progress to try and accomodate those platforms)
-
 =head1 SYNOPSIS
 
   use File::SharedVar;
@@ -32,19 +28,22 @@ File::SharedVar provides an object-oriented interface to share variables between
 
 It allows you to read, update, and reset shared variables stored in a file (uses JSON format), making it easy to coordinate between multiple processes.
 
-This module uses a lockfile as a mutex, because flock() does not work properly in WSL1, WSL2, or their lxfs file systems (randomly throws "invalid argument" on seek() calls under heavy load).
-
 This module was written to serve as a functioning alternative to the incomplete and unmaintained "IPC::Shareable" module which has multiple unfixed bugs reported against it (and which shreds your shared memory under long-running processes)
 
 =head2 CAUTION
 
-This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their "lxfs" filesystem.
+This module relies on your filesystem properly supporting file locking (and your selection of a lockfile on that filesystem), which is not the case for Windows Services for Linux (WSL1 and WSL2) nor their "lxfs" filesystem.  The bug has been reported to Microsoft.
 
 The "test" phase of installing this module, when run on a system with broken locking, may take an extended amount of time to fail (many minutes or even hours).
 
+A future version of this module is planned, optionally using a lockfile as a mutex for WSL, because flock() does not work properly in WSL1, WSL2, or their lxfs file systems (randomly throws "invalid argument" on seek() calls under heavy load).
+
+=head2 WSL workaround
+
+The mounted windows NTFS file system does support locking under WSL - use a lockfile on one of your "drvfs" (e.g. C: or /mnt/c) to have this module work properly there.
+
 =cut
 
-use 5.030000;
 use strict;
 use warnings;
 use Fcntl qw(:DEFAULT :flock LOCK_EX LOCK_UN LOCK_NB O_RDWR O_EXCL O_CREAT);
@@ -163,13 +162,14 @@ C<$increment>: If true (non-zero), increments the existing value by C<$value>; o
 
 =back
 
-Returns the new value associated with the key after the update.
+Returns the previous value associated with the key, from before the update.
 
 =cut
 
 sub update {
   my($self, $key, $val, $inc) = @_;
   my($data)= _load_from_file($self,1);
+  my $ret = $data->{$key};
 
   # Update the value for the key
   if($inc) {
@@ -177,7 +177,6 @@ sub update {
   } else {
     $data->{$key} = $val;
   }
-  my $ret = $data->{$key};
   _save_to_file($self,$data);
 
   return $ret;
@@ -261,6 +260,13 @@ __END__
 =head1 EXPORT
 
 None by default.
+
+=head1 DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+  JSON (either JSON::XS or JSON::PP)
+  Fcntl
 
 =head1 SOURCE / BUG REPORTS
 
