@@ -12,6 +12,7 @@ File::SharedVar - Pure-Perl extension to share variables between Perl processes 
   my $shared_var = File::SharedVar->new(
     file   => '/tmp/ramdisk/sharedvar.dat',
     create => 1,  # Set to 1 to create or truncate the file
+    mutex => 'lock', # OPTIONAL: Use this if your filesystem cannot flock() (e.g. WSL)
   );
 
   # Update a key
@@ -36,11 +37,12 @@ This module relies on your filesystem properly supporting file locking (and your
 
 The "test" phase of installing this module, when run on a system with broken locking, may take an extended amount of time to fail (many minutes or even hours).
 
-A future version of this module is planned, optionally using a lockfile as a mutex for WSL, because flock() does not work properly in WSL1, WSL2, or their lxfs file systems (randomly throws "invalid argument" on seek() calls under heavy load).
+If the test hangs or fails on your system, you can "force install" the module, and remember to use the C<mutex => 'lock'> when creating SharedVar objects.
 
-=head2 WSL workaround
+=head2 WSL workarounds
 
-The mounted windows NTFS file system does support locking under WSL - use a lockfile on one of your "drvfs" (e.g. C: or /mnt/c) to have this module work properly there.
+1. The mounted windows NTFS file system does support locking under WSL - use a lockfile on one of your "drvfs" (e.g. C: or /mnt/c) to have this module work properly there.
+2. the C<mutex => 'lock'> option when creating SharedVar objects.
 
 =cut
 
@@ -53,7 +55,7 @@ use Fcntl qw(:DEFAULT :flock LOCK_EX LOCK_UN LOCK_NB O_RDWR O_EXCL O_CREAT);
 #my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR)=(2,8,4,2); # These are required, because the $LOCK_* constants are sometimes not numbers, and inconveniently require "no strict 'subs';"
 my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR,$O_EXCL,$O_CREAT)=(0+LOCK_EX,0+LOCK_UN,0+LOCK_NB,0+O_RDWR,0+O_EXCL,0+O_CREAT); # Avoid no strict 'subs' and nonnumber issues
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 our $DEBUG = 0;
 
 eval {
@@ -101,14 +103,18 @@ sub new {
 
   bless $self, $class;
 
+  $self->{lock}=$self->{file}.".lock" if($args{mutex} && $args{mutex} eq 'lock');
+
   if ($args{create}) {
-    # Create or truncate the file
+    $self->_lockme(1000); # try, but only upto a few seconds
+
+    # Create or truncate the data file
     open my $fh, '>', $self->{file} or die "Cannot open $self->{file}: $!";
     close $fh;
+    $self->_unlock();
   } elsif (!-f $self->{file}) {
     die $self->{file},": No such file";
   }
-  $self->{lock}=$self->{file}.".lock" if($args{mutex} && $args{mutex} eq 'lock');
   return $self;
 }
 
@@ -186,12 +192,7 @@ sub update {
 
 sub _load_from_file {
   my($self,$staylocked)=@_;
-
-  if($self->{lock}) {
-    sysopen($self->{lfh}, $self->{lock}, O_EXCL | O_CREAT ) or die "Cannot open $self->{lock}: $!";
-    die "incomplete";
-  }
-
+  $self->_lockme();
   open $self->{fh}, '+<', $self->{file} or die "$$ Cannot open $self->{file}: $!";
   #sysopen($self->{fh}, $self->{file}, $O_RDWR) or die "Cannot open $self->{file}: $!";
 
@@ -207,9 +208,7 @@ sub _load_from_file {
   unless($staylocked){  # LOCK_UN (unlock)
     flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";
     $self->{fh}->close; $self->{fh}=undef;
-    if($self->{lock}) {
-      die "incomplete";
-    }
+    $self->_unlock(); 
   }
   return($data);
 } # _load_from_file
@@ -223,18 +222,32 @@ sub _save_to_file {
   #syswrite($self->{fh},encode_json($data));
   flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
   $self->{fh}->close; $self->{fh}=undef; 
-  if($self->{lock}) {
-    die "incomplete";
-  }
+  $self->_unlock();
 } # _save_to_file
 
 
-sub _open_lock {
+sub _unlock {
   my($self)=@_;
-  my $i=0;
-  while($i++<9999) {
-    sysopen($self->{fh}, $self->{file}, $O_RDWR) or die "Cannot open $self: $!";
-    
+  if($self->{lock}) {
+    close($self->{lfh}); $self->{lfh}=undef;
+    unlink($self->{lock});
+  }
+}
+
+
+sub _lockme {
+  my($self,$maxtries)=@_;
+  if($self->{lock}) { # flock() unreliable...
+    my $retry=1;while($retry>0 && (!$maxtries || $retry<$maxtries)){
+      sysopen($self->{lfh}, $self->{lock}, O_EXCL | O_CREAT );
+      if($!==17) { # Exists
+        $retry++;
+        select(undef, undef, undef, $retry > 2000 ? 2: (1 / 10000) * (2 ** ($retry/140))); # sleeps 0.0001s, increasing to 2s as we wait.
+      } else {
+        $retry=0;
+      }
+    }
+    die "Cannot lock; existing lockfile ",$self->{lock}," exists indefinitely" if($!==17);
   }
 }
 

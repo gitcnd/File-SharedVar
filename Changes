@@ -4,3 +4,6 @@ Revision history for Perl extension File::SharedVar.
 	- original version; created by h2xs 1.23 with options
 		-AX -n File::SharedVar
 
+1.01  Sat 19 Oct 2024 02:50:14 GMT
+	- added file-existence mutex option to get this working on WSL or other systems without flock() support
+
