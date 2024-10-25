@@ -55,7 +55,7 @@ use Fcntl qw(:DEFAULT :flock LOCK_EX LOCK_UN LOCK_NB O_RDWR O_EXCL O_CREAT);
 #my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR)=(2,8,4,2); # These are required, because the $LOCK_* constants are sometimes not numbers, and inconveniently require "no strict 'subs';"
 my($LOCK_EX,$LOCK_UN,$LOCK_NB,$O_RDWR,$O_EXCL,$O_CREAT)=(0+LOCK_EX,0+LOCK_UN,0+LOCK_NB,0+O_RDWR,0+O_EXCL,0+O_CREAT); # Avoid no strict 'subs' and nonnumber issues
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 our $DEBUG = 0;
 
 eval {
@@ -207,7 +207,7 @@ sub _load_from_file {
   $data = decode_json($json_text) if $json_text;
   unless($staylocked){  # LOCK_UN (unlock)
     flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";
-    $self->{fh}->close; $self->{fh}=undef;
+    close($self->{fh}); $self->{fh}=undef;
     $self->_unlock(); 
   }
   return($data);
@@ -221,7 +221,7 @@ sub _save_to_file {
   print { $self->{fh} } encode_json($data);
   #syswrite($self->{fh},encode_json($data));
   flock($self->{fh}, $LOCK_UN) or die "$$ Cannot unlock: $!";  # LOCK_UN (unlock)
-  $self->{fh}->close; $self->{fh}=undef; 
+  close($self->{fh}); $self->{fh}=undef; 
   $self->_unlock();
 } # _save_to_file
 

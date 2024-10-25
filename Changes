@@ -7,3 +7,6 @@ Revision history for Perl extension File::SharedVar.
 1.01  Sat 19 Oct 2024 02:50:14 GMT
 	- added file-existence mutex option to get this working on WSL or other systems without flock() support
 
+1.02  Fri Oct 25 05:01:40 UTC 2024
+	- use close() instead of ->close to allow this to work on older perls
+
